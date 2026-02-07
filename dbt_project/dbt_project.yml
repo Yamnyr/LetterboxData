@@ -1,0 +1,22 @@
+name: 'letterboxd_pipeline'
+version: '1.0.0'
+config-version: 2
+
+profile: 'letterboxd_profile'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  letterboxd_pipeline:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

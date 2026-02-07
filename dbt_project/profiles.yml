@@ -1,0 +1,9 @@
+letterboxd_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../letterboxd_data.duckdb'
+      extensions:
+        - httpfs
+        - parquet

@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    database: letterboxd_data
+    schema: main
+    tables:
+      - name: raw_watched
+      - name: raw_ratings
+      - name: raw_diary
+      - name: raw_watchlist
+      - name: raw_tmdb_metadata
+      - name: raw_likes

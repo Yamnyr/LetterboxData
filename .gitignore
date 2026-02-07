@@ -1,0 +1,30 @@
+# Environment variables
+.env
+
+# Database and Data
+*.duckdb
+*.duckdb.wal
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+
+# dbt
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/dbt_modules/
+
+# Streamlit
+.streamlit/
+! .streamlit/config.toml
+
+# OS
+.DS_Store
+Thumbs.db
