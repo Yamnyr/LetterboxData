@@ -5,6 +5,7 @@
 *.duckdb
 *.duckdb.wal
 data/
+temp/
 
 # Python
 __pycache__/

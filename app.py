@@ -5,6 +5,9 @@ import plotly.express as px
 import os
 from dotenv import load_dotenv
 import math
+import tempfile
+import shutil
+from scripts.pipeline import unzip_and_locate_csvs, run_dynamic_pipeline, load_all_dataframes_from_db
 
 load_dotenv()
 
@@ -94,34 +97,152 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-@st.cache_resource
-def get_connection():
-    return duckdb.connect(DB_PATH, read_only=True)
+# Session State Initialization
+if "dataframes" not in st.session_state:
+    st.session_state.dataframes = None
+if "is_uploaded" not in st.session_state:
+    st.session_state.is_uploaded = False
+if "username" not in st.session_state:
+    st.session_state.username = "Démo"
+if "last_uploaded_file" not in st.session_state:
+    st.session_state.last_uploaded_file = None
 
-def load_data(table_name):
-    con = get_connection()
-    return con.execute(f"SELECT * FROM {table_name}").df()
 
-st.title("🎬 Letterboxd Personal Data Pipeline")
-st.markdown("### Your Cinema Universe, Visualized")
 
-if not os.path.exists(DB_PATH):
-    st.error(f"Database not found at {DB_PATH}. Please run the ingestion and dbt pipeline first.")
+# Try loading default DB if no user database uploaded yet
+if st.session_state.dataframes is None:
+    if os.path.exists(DB_PATH):
+        try:
+            st.session_state.dataframes = load_all_dataframes_from_db(DB_PATH)
+            st.session_state.is_uploaded = False
+            st.session_state.username = "Démo"
+        except Exception as e:
+            st.error(f"Impossible de charger la base de données par défaut : {e}")
+            st.stop()
+
+# Sidebar: Data Import section
+st.sidebar.markdown("---")
+st.sidebar.subheader("📤 Importer vos données")
+st.sidebar.markdown(
+    "Visualisez vos propres statistiques Letterboxd !\n"
+    "1. Allez dans vos paramètres Letterboxd.\n"
+    "2. Cliquez sur **Import & Export** puis **Export Data**.\n"
+    "3. Glissez-déposez le ZIP ci-dessous !"
+)
+
+# API Key config
+api_key_env = os.getenv("TMDB_API_KEY", "")
+tmdb_api_key = st.sidebar.text_input(
+    "Clé API TMDB (Optionnel)",
+    type="password",
+    value=api_key_env,
+    help="Utilisée pour enrichir vos nouveaux films avec genres, réalisateurs, etc. Si vide, l'application n'enrichira pas vos nouveaux films."
+)
+
+uploaded_file = st.sidebar.file_uploader(
+    "Sélectionnez votre ZIP Letterboxd",
+    type=["zip"],
+    help="Fichier ZIP exporté depuis Letterboxd"
+)
+
+# Dynamic pipeline execution on file upload
+if uploaded_file is not None:
+    if st.session_state.last_uploaded_file != uploaded_file.name:
+        with st.status("🚀 Traitement de votre archive Letterboxd...", expanded=True) as status:
+            try:
+                # Step 1: ZIP extraction
+                status.write("📂 Étape 1/3 : Extraction du fichier ZIP...")
+                temp_dir = tempfile.TemporaryDirectory()
+                csv_dir = unzip_and_locate_csvs(uploaded_file, temp_dir.name)
+                
+                # Try to extract username
+                folder_name = os.path.basename(csv_dir)
+                username = "Utilisateur"
+                if folder_name.startswith("letterboxd-"):
+                    parts = folder_name.split("-")
+                    if len(parts) > 1:
+                        username = parts[1]
+                
+                # Step 2: Database preparation
+                status.write("💾 Étape 2/3 : Préparation de la base de données...")
+                session_db_path = os.path.join(temp_dir.name, "letterboxd_session.duckdb")
+                if os.path.exists(DB_PATH):
+                    shutil.copy(DB_PATH, session_db_path)
+                
+                # Step 3: Run pipeline with progress callback
+                status.write("🔍 Étape 3/3 : Récupération des films manquants depuis TMDB...")
+                progress_bar = st.progress(0.0)
+                
+                def progress_cb(current, total, message):
+                    if total > 0:
+                        progress_bar.progress(current / total)
+                        status.write(f"🎬 Ingestion TMDB : {message} ({current}/{total})")
+                    else:
+                        status.write(message)
+                
+                run_dynamic_pipeline(
+                    csv_dir=csv_dir,
+                    db_path=session_db_path,
+                    dbt_project_dir="dbt_project",
+                    tmdb_api_key=tmdb_api_key,
+                    progress_callback=progress_cb
+                )
+                
+                # Load all dataframes in session
+                status.write("📊 Finalisation du chargement des graphiques...")
+                st.session_state.dataframes = load_all_dataframes_from_db(session_db_path)
+                st.session_state.is_uploaded = True
+                st.session_state.username = username
+                st.session_state.last_uploaded_file = uploaded_file.name
+                
+                # Clean up temp folder
+                try:
+                    temp_dir.cleanup()
+                except:
+                    pass
+                
+                status.update(label="✅ Données chargées avec succès !", state="complete", expanded=False)
+                st.toast("🎉 Vos données Letterboxd ont été chargées avec succès !")
+                st.rerun()
+                
+            except Exception as e:
+                status.update(label="❌ Erreur lors de l'analyse des données", state="error", expanded=True)
+                st.error(f"Une erreur est survenue : {e}")
+
+# If we have uploaded data, show a button to reset and go back to Demo Mode
+if st.session_state.is_uploaded:
+    if st.sidebar.button("🔙 Retourner au profil de Démo", key="reset_demo_btn"):
+        st.session_state.dataframes = None
+        st.session_state.is_uploaded = False
+        st.session_state.username = "Démo"
+        st.session_state.last_uploaded_file = None
+        st.rerun()
+
+# Welcome screen if no data is loaded at all
+if st.session_state.dataframes is None:
+    st.title("🎬 Letterboxd Personal Data Pipeline")
+    st.markdown("### Votre univers cinématographique, visualisé")
+    st.info("👋 Bienvenue ! Veuillez téléverser votre fichier ZIP Letterboxd dans la barre latérale pour commencer.")
     st.stop()
 
-# Load main data
-try:
-    df_movies = load_data("mart_movies")
-    df_watched = load_data("stg_watched")
-    df_ratings = load_data("stg_ratings")
-    df_genres = load_data("mart_movie_genres")
-    df_countries = load_data("mart_movie_countries")
-    df_crew = load_data("mart_movie_crew")
-    df_cast = load_data("mart_movie_cast")
-    df_diary = load_data("stg_diary")
-except Exception as e:
-    st.error(f"Erreur lors du chargement des données : {e}. Assurez-vous d'avoir lancé le pipeline.")
-    st.stop()
+# Unpack dataframes for UI
+dfs = st.session_state.dataframes
+df_movies = dfs["mart_movies"]
+df_watched = dfs["stg_watched"]
+df_ratings = dfs["stg_ratings"]
+df_genres = dfs["mart_movie_genres"]
+df_countries = dfs["mart_movie_countries"]
+df_crew = dfs["mart_movie_crew"]
+df_cast = dfs["mart_movie_cast"]
+df_diary = dfs["stg_diary"]
+
+# Premium Dynamic Title
+if st.session_state.is_uploaded:
+    st.title(f"🎬 Statistiques Letterboxd de @{st.session_state.username}")
+    st.markdown("### Votre univers cinématographique, visualisé")
+else:
+    st.title("🎬 Letterboxd Personal Data Pipeline")
+    st.markdown("### Profil de Démo — Visualisez votre univers cinématographique")
 
 # Barre latérale - Filtres
 st.sidebar.title("🔍 Filtres")
@@ -150,7 +271,7 @@ df_countries_filtered = df_countries.merge(df_watched_filtered[['movie_title', '
 
 # Charger les Likes
 try:
-    df_likes = load_data("stg_likes")
+    df_likes = dfs.get("stg_likes", pd.DataFrame())
     if selected_year != "Toutes":
         df_likes_filtered = df_likes[df_likes['like_date'].dt.year == int(selected_year)]
     else:
@@ -333,7 +454,7 @@ with col_cast:
 # --- SUCCESS & DÉCEPTIONS ---
 st.divider()
 st.subheader("🏆 SUCCÈS ET DÉCEPTIONS")
-df_stats = load_data("mart_rating_stats")
+df_stats = dfs["mart_rating_stats"]
 if selected_year != "Toutes":
     df_stats = df_stats.merge(df_ratings[['movie_title', 'release_year', 'rating_date']], on=['movie_title', 'release_year'])
     df_stats = df_stats[pd.to_datetime(df_stats['rating_date']).dt.year == int(selected_year)]
@@ -355,7 +476,7 @@ col_rec, col_evol = st.columns(2)
 
 with col_rec:
     st.subheader("🔭 PÉPITES À VOIR (WATCHLIST)")
-    df_rec = load_data("mart_watchlist_recommendations")
+    df_rec = dfs["mart_watchlist_recommendations"]
     if not df_rec.empty:
         st.dataframe(df_rec[['movie_title', 'release_year', 'tmdb_vote_average']].rename(columns={'movie_title': 'Titre', 'tmdb_vote_average': 'Note TMDB'}).head(20), use_container_width=True)
     else:
