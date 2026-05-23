@@ -175,34 +175,48 @@ def run_dynamic_pipeline(csv_dir, db_path, dbt_project_dir, tmdb_api_key, progre
         
     missing_films = missing_films.drop_duplicates().reset_index(drop=True)
     
-    # 5. Ingest missing movies from TMDB (with progress reporting)
+    # 5. Ingest missing movies from TMDB (with progress reporting & parallel multi-threading)
     total_missing = len(missing_films)
     if total_missing > 0 and tmdb_api_key and tmdb_api_key != "your_api_key_here":
         print(f"Need to fetch {total_missing} films from TMDB API.")
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        for idx, row in missing_films.iterrows():
+        def fetch_single(row):
             name = row['Name']
             year = row['Year']
-            
-            # Format and sanitize year
             try:
                 year_val = int(float(year)) if pd.notnull(year) else None
             except:
                 year_val = None
-                
-            if progress_callback:
-                progress_callback(idx + 1, total_missing, f"Récupération de {name} ({year_val if year_val else 'N/A'})...")
-                
             data = fetch_tmdb_data(name, year_val, tmdb_api_key)
-            if data:
-                json_str = json.dumps(data)
-                db.execute(
-                    "INSERT INTO raw_tmdb_metadata (name, year, tmdb_id, json_data) VALUES (?, ?, ?, ?)",
-                    [name, year_val, data.get('id'), json_str]
-                )
+            return name, year_val, data
+
+        max_workers = min(15, total_missing)
+        fetched_count = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_row = {
+                executor.submit(fetch_single, row): row 
+                for _, row in missing_films.iterrows()
+            }
             
-            # Brief sleep to satisfy TMDB guidelines
-            time.sleep(0.15)
+            for future in as_completed(future_to_row):
+                name, year_val, data = future.result()
+                fetched_count += 1
+                
+                if progress_callback:
+                    progress_callback(
+                        fetched_count, 
+                        total_missing, 
+                        f"Enrichi : {name} ({year_val if year_val else 'N/A'})"
+                    )
+                
+                if data:
+                    json_str = json.dumps(data)
+                    db.execute(
+                        "INSERT INTO raw_tmdb_metadata (name, year, tmdb_id, json_data) VALUES (?, ?, ?, ?)",
+                        [name, year_val, data.get('id'), json_str]
+                    )
     elif total_missing > 0:
         print("Missing films found but no TMDB API key available. Skipping metadata fetching.")
         if progress_callback:
