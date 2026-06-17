@@ -12,7 +12,9 @@ with movies as (
         tmdb_popularity,
         original_language,
         origin_countries,
-        overview
+        overview,
+        tmdb_poster_path,
+        tmdb_backdrop_path
     from {{ ref('stg_tmdb') }}
 ),
 

@@ -17,58 +17,87 @@ Un dashboard d'analyse cinématographique premium conçu pour sublimer les donn�
 
 ## Architecture Technique
 
-Le projet suit une architecture **ELT (Extract, Load, Transform)** moderne et locale :
+Le projet suit une architecture **ELT (Extract, Load, Transform)** moderne et cloud-native :
 
-1.  **Ingestion (Python + TMDB API)** : 
-    - Le script `scripts/ingest_tmdb.py` lit vos fichiers CSV Letterboxd (`watched.csv`, `ratings.csv`, etc.).
-    - Il identifie les films manquants et récupère les métadonnées via l'API TMDB (Genres, Popularité, Budget, Casting, Pays).
-    - Les données brutes (JSON) et les CSV sont chargés dans un entrepôt de données local **DuckDB**.
+1.  **Ingestion Dynamique (Multi-Threaded Python + TMDB API)** : 
+    - Le dashboard inclut un importateur de fichier ZIP directement dans l'interface.
+    - Le ZIP est extrait dans un environnement temporaire sécurisé (concurrence multi-utilisateur garantie).
+    - L'ingestion interroge l'API TMDB en **parallèle (15 threads concurrents via `ThreadPoolExecutor`)** pour enrichir à la volée les films inconnus du cache, réduisant le temps d'ingestion de **5 minutes à moins de 30 secondes** pour plus de 1 000 films !
 
-2.  **Transformation (dbt)** :
-    - Utilisation de **dbt (Data Build Tool)** pour structurer la donnée.
-    - **Staging** : Nettoyage et typage des données brutes (ex: parsing des dates, extraction des listes JSON).
-    - **Marts** : Création de tables agrégées prêtes pour l'analyse (ex: stats par réalisateur, calcul des différences de notes).
+2.  **Transformation (dbt compilé "On-the-Fly")** :
+    - Pour permettre le déploiement sur Streamlit Cloud sans l'overhead de la CLI d'ingestion ou de dbt, l'application intègre un **compilateur SQL DBT dynamique**.
+    - Il lit les modèles SQL situés dans `/dbt_project`, compile les macros dbt (comme `{{ ref() }}` et `{{ source() }}`) et exécute les transformations directement dans la base de données DuckDB de session en tant que Views et Tables.
 
 3.  **Visualisation (Streamlit + Plotly)** :
     - Dashboard interactif haute performance.
-    - Design personnalisé respectant la charte graphique de Letterboxd (Dark Mode, accents Orange/Vert/Bleu).
+    - Design premium respectant la charte graphique de Letterboxd (Dark Mode, accents HSL Orange/Vert/Bleu).
+
+---
 
 ## Prérequis
 
 - Python 3.9+
 - Une clé API TMDB (gratuite pour un usage personnel).
-- Votre export Letterboxd (fichiers CSV) placé dans un dossier `data/`.
+- Votre archive de données Letterboxd (ZIP obtenu via les paramètres de votre compte > Import & Export > Export Data).
 
-## Installation & Lancement
+---
+
+## Installation & Lancement Local
 
 1.  **Configuration** :
     Créez un fichier `.env` à la racine :
     ```env
     TMDB_API_KEY=votre_cle_api_ici
-    LETTERBOXD_DATA_DIR=data
     DUCKDB_PATH=letterboxd_data.duckdb
     ```
 
-2.  **Pipeline complet** :
-    Exécutez le script d'orchestration pour ingérer les données, lancer les transformations dbt et ouvrir le dashboard :
+2.  **Lancement du Dashboard** :
+    Vous pouvez lancer directement le dashboard Streamlit :
+    ```bash
+    pip install -r requirements.txt
+    streamlit run app.py
+    ```
+    *L'application s'ouvrira en **Mode Démo** avec des données pré-existantes. Vous pourrez ensuite téléverser votre propre fichier ZIP dans la barre latérale pour afficher instantanément vos statistiques !*
+
+3.  **Pipeline Classique (Ligne de commande - Optionnel)** :
+    Si vous préférez exécuter le pipeline d'ingestion en local via dbt en ligne de commande, placez vos CSV dans un dossier `data/` et lancez :
     ```powershell
     .\run_pipeline.ps1
     ```
 
+---
+
+## Déploiement en Production (Streamlit Cloud)
+
+Cette application est **100% compatible avec Streamlit Community Cloud** grâce à son architecture en mémoire et sa gestion de base de données par session.
+
+1.  Poussez le code sur votre dépôt GitHub (le fichier `.gitignore` a été configuré pour **exclure automatiquement** votre dossier `temp/` et vos fichiers ZIP contenant vos données personnelles).
+2.  Créez une application sur [Streamlit Share](https://share.streamlit.com/).
+3.  Dans les **Settings** > **Secrets** de votre application Streamlit, ajoutez votre clé TMDB :
+    ```toml
+    TMDB_API_KEY = "votre_cle_api_tmdb_reelle"
+    ```
+4.  Enregistrez. L'application est prête à accueillir n'importe quel utilisateur qui pourra y glisser son propre ZIP !
+
+---
+
 ## Structure du Projet
 
 ```text
-├── app.py                 # Application Streamlit (Dashboard)
+├── app.py                 # Application Streamlit (Dashboard principal)
 ├── scripts/
-│   └── ingest_tmdb.py     # Script d'ingestion et enrichissement API
+│   ├── pipeline.py        # Moteur d'extraction, compilation SQL dbt et TMDB multi-threaded
+│   └── ingest_tmdb.py     # Script d'ingestion en ligne de commande (ELT local)
 ├── dbt_project/
 │   ├── models/
-│   │   ├── staging/       # Nettoyage des données (Models dbt)
-│   │   └── marts/         # Tables analytiques finales
+│   │   ├── staging/       # Nettoyage des données (Models dbt SQL)
+│   │   └── marts/         # Tables analytiques finales (Models dbt SQL)
 │   └── dbt_project.yml    # Configuration dbt
-├── data/                  # Dossier contenant vos CSV Letterboxd
-└── letterboxd_data.duckdb # Entrepôt de données local (généré)
+├── temp/                  # Dossier temporaire pour les zips (Exclu de Git)
+└── letterboxd_data.duckdb # Base de données DuckDB locale de démo
 ```
+
+---
 
 ## Note sur le "Score Hipster"
 Le score est calculé via une fonction logarithmique sur la popularité moyenne de votre historique. Un score proche de 100 indique que vous privilégiez des films "niche" ou peu connus sur la scène internationale (TMDB), tandis qu'un score plus bas reflète une consommation plus axée sur les blockbusters et les films "mainstream".

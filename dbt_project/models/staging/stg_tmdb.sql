@@ -21,6 +21,8 @@ select
     (json_data->>'$.original_language') as original_language,
     from_json(json_data->'$.origin_country', '["VARCHAR"]') as origin_countries,
     (json_data->>'$.overview') as overview,
+    (json_data->>'$.poster_path') as tmdb_poster_path,
+    (json_data->>'$.backdrop_path') as tmdb_backdrop_path,
     -- Extract genres as an array of names
     from_json(json_data->'$.genres', '["JSON"]') as genres_json,
     -- Extract production countries

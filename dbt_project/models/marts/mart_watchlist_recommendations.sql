@@ -12,7 +12,11 @@ tmdb as (
         release_year,
         tmdb_vote_average,
         tmdb_vote_count,
-        overview
+        overview,
+        runtime_minutes,
+        tmdb_popularity,
+        tmdb_poster_path,
+        tmdb_backdrop_path
     from {{ ref('stg_tmdb') }}
 )
 
@@ -20,8 +24,10 @@ select
     w.*,
     t.tmdb_vote_average,
     t.tmdb_vote_count,
-    t.overview
+    t.overview,
+    t.runtime_minutes,
+    t.tmdb_popularity,
+    t.tmdb_poster_path,
+    t.tmdb_backdrop_path
 from watchlist w
-join tmdb t on w.movie_title = t.movie_title and w.release_year = t.release_year
-where t.tmdb_vote_average >= 7.5  -- Highly rated by community
-order by t.tmdb_vote_average desc
+left join tmdb t on w.movie_title = t.movie_title and w.release_year = t.release_year
